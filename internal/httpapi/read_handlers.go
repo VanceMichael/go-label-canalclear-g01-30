@@ -62,6 +62,7 @@ func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	page.Items = audit.SanitizeEvents(page.Items, audit.DefaultDetailSanitizer())
 	writeJSON(w, http.StatusOK, page)
 }
 
