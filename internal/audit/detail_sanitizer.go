@@ -51,7 +51,7 @@ func (sanitizer DetailSanitizer) sanitizeStructuredValue(value, redactedValue st
 	if decoder.More() {
 		return trimmed
 	}
-	redacted, changed := sanitizeTopLevelJSON(document, redactedValue)
+	redacted, changed := sanitizeJSON(document, redactedValue)
 	if !changed {
 		return trimmed
 	}
@@ -62,23 +62,46 @@ func (sanitizer DetailSanitizer) sanitizeStructuredValue(value, redactedValue st
 	return encoded
 }
 
-func sanitizeTopLevelJSON(document any, redactedValue string) (any, bool) {
-	object, ok := document.(map[string]any)
-	if !ok {
+// sanitizeJSON walks a decoded JSON value and replaces the values of any
+// sensitive keys with the redaction marker, recursing into nested objects and
+// array elements so that secrets buried inside snapshots (e.g. a customs
+// request payload) are redacted. Scalars, plain fields, and values whose key is
+// itself sensitive (the whole value is replaced) are left untouched. The
+// returned bool reports whether any value was changed, so callers can preserve
+// the original text when nothing needed redaction.
+func sanitizeJSON(document any, redactedValue string) (any, bool) {
+	switch value := document.(type) {
+	case map[string]any:
+		changed := false
+		copyObject := make(map[string]any, len(value))
+		for key, child := range value {
+			normalizedKey := strings.ToLower(strings.TrimSpace(key))
+			if isSensitive(normalizedKey) {
+				copyObject[key] = redactedValue
+				changed = true
+				continue
+			}
+			sanitizedChild, childChanged := sanitizeJSON(child, redactedValue)
+			copyObject[key] = sanitizedChild
+			if childChanged {
+				changed = true
+			}
+		}
+		return copyObject, changed
+	case []any:
+		changed := false
+		copyArray := make([]any, len(value))
+		for index, child := range value {
+			sanitizedChild, childChanged := sanitizeJSON(child, redactedValue)
+			copyArray[index] = sanitizedChild
+			if childChanged {
+				changed = true
+			}
+		}
+		return copyArray, changed
+	default:
 		return document, false
 	}
-	changed := false
-	copyObject := make(map[string]any, len(object))
-	for key, value := range object {
-		normalizedKey := strings.ToLower(strings.TrimSpace(key))
-		if isSensitive(normalizedKey) {
-			copyObject[key] = redactedValue
-			changed = true
-			continue
-		}
-		copyObject[key] = value
-	}
-	return copyObject, changed
 }
 
 func encodeCompactJSON(document any) (string, error) {
